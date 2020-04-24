@@ -1,0 +1,20 @@
+# permissions for end users to view sloops.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sloop-viewer-role
+rules:
+- apiGroups:
+  - ships.k8s.io
+  resources:
+  - sloops
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ships.k8s.io
+  resources:
+  - sloops/status
+  verbs:
+  - get

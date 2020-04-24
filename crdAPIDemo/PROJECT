@@ -1,0 +1,7 @@
+domain: k8s.io
+repo: github.com/crdAPIDemo
+resources:
+- group: ships
+  kind: Sloop
+  version: v1beta1
+version: "2"
