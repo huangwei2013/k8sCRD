@@ -1,4 +1,4 @@
-# K8S CRD扩展
+# 1. K8S CRD扩展
 kubernetes的CRD实现示例
 
 ## crdAPIDemo
@@ -17,7 +17,7 @@ make install & make run
 # K8S 事件监听
 实时监听 k8s event和namespace、pod等的事件，可以作为监控、系统对接的接入
 
-## K8S-Eventlet
+## 2. K8S-Eventlet
 基于client-go、gorm实现，实时监听 & 解析入DB 了多种事件。
 代码简明，方便扩展
 
