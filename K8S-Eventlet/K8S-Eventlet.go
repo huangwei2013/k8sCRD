@@ -10,6 +10,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	//	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/runtime"
 
 	"k8s.io/client-go/informers"
@@ -24,6 +25,8 @@ import (
 type K8sRecord struct {
 	gorm.Model
 	EventType string `gorm:"index:event_type"`
+	ActType string
+	EventID string `gorm:"index:event_id"`
 	EventName string `gorm:"index:event_name"`
 	PodIP     string `gorm:"index:pod_id"`
 	PodName   string
@@ -31,6 +34,7 @@ type K8sRecord struct {
 	Namespace string
 	Action    string
 	Kind      string
+	Type      string
 	Source    string
 	Name      string
 	Reason    string
@@ -78,116 +82,89 @@ func main() {
 	defer close(stopCh)
 
 	// 初始化 informer
-	syncPeriod := time.Duration(100 * 1000000000)
-	fmt.Println(syncPeriod)
 	informerFactory := informers.NewSharedInformerFactory(clientset, 0)
 	defer runtime.HandleCrash()
 
 	// 启动 informer，list & watch
 	go informerFactory.Start(stopCh)
-
-	informerHanlder(informerFactory, stopCh, db)
+	informerHandler(informerFactory, stopCh, db)
 
 	<-stopCh
 }
 
-func informerHanlder(informerFactory informers.SharedInformerFactory, stopCh <-chan struct{}, db *gorm.DB){
-	nodeInformer := informerFactory.Core().V1().Nodes()
-	eventsInformer := informerFactory.Core().V1().Events()
-	nameInformer := informerFactory.Core().V1().Namespaces()
-	podInformer := informerFactory.Core().V1().Pods()
+func informerHandler(informerFactory informers.SharedInformerFactory, stopCh <-chan struct{}, db *gorm.DB){
 
-	informerNamespace(nameInformer, db)
-	informerEvent(eventsInformer, db)
-	informerPod(podInformer)
-	informerNode(nodeInformer)
+	informersMap := make(map[string]interface{})
+	informersMap["node"] = informerFactory.Core().V1().Nodes()
+	informersMap["event"] = informerFactory.Core().V1().Events()
+	informersMap["namespace"] = informerFactory.Core().V1().Namespaces()
+	informersMap["pod"] = informerFactory.Core().V1().Pods()
 
-	go nodeInformer.Informer().Run(stopCh)
-	go eventsInformer.Informer().Run(stopCh)
-	go nameInformer.Informer().Run(stopCh)
-	go podInformer.Informer().Run(stopCh)
+	for name, informer := range informersMap {
+		fmt.Println(" informer handlers : ",name)
+
+		switch informer := informer.(type) {
+
+		case  coreinformers.NodeInformer:
+		case  coreinformers.EventInformer:
+		case  coreinformers.NamespaceInformer:
+		case  coreinformers.PodInformer:
+			informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+				AddFunc: func(obj interface{}) { fmt.Println(obj); parseInform4K8SRecord(name, "add", obj, db); },
+				UpdateFunc: func(old, new interface{}) {
+					fmt.Println(old);
+					fmt.Println(new);
+					parseInform4K8SRecord(name, "update.old", old, db);
+					parseInform4K8SRecord(name, "update.new", new, db);
+				},
+				DeleteFunc: func(obj interface{}) { fmt.Println(obj); parseInform4K8SRecord(name, "delete", obj, db); },
+			})
+
+			go informer.Informer().Run(stopCh)
+		}
+	}
 }
 
 // TODO：这部分要做大量字段枚举
-func parseInform4K8SRecord(informType string, obj interface{}, db *gorm.DB){
+func parseInform4K8SRecord(informType string, actType string, obj interface{}, db *gorm.DB){
 
 	var k8sRecord K8sRecord
 	switch informType {
 	case "event":
 		node := obj.(*corev1.Event)
-		k8sRecord = K8sRecord{EventType: informType,
+		k8sRecord = K8sRecord{EventType: informType, ActType: actType,
 			FirstTimestamp : node.FirstTimestamp.Time,
+			Type : node.Type, EventID: fmt.Sprint(node.UID), Cluster: node.ClusterName, Kind: node.Kind,
 			Name: node.Name,Namespace: node.Namespace, Action: node.Action, Phase: "",
-			Reason: node.Reason, Kind: node.Kind, Source : node.Source.String(),
-			Message:node.Message, Cluster:node.ClusterName}
+			Reason: node.Reason, Source : node.Source.String(),
+			Message:node.Message}
 	case "namespace":
 		node := obj.(*corev1.Namespace)
-		k8sRecord = K8sRecord{EventType: informType,
+		k8sRecord = K8sRecord{EventType: informType, ActType: actType,
 			FirstTimestamp: node.ObjectMeta.CreationTimestamp.Time,
+			EventID: fmt.Sprint(node.UID), Cluster: node.ClusterName, Kind: node.Kind,
 			Name: node.Name, Namespace: node.Name, Action: "", Phase: fmt.Sprint(node.Status.Phase),
-			Reason: "", Kind: node.Kind, Source : "",
-			Message:"", Cluster:node.ClusterName}
+			Reason: "", Source : "",
+			Message:""}
+	case "node":
+		node := obj.(*corev1.Node)
+		k8sRecord = K8sRecord{EventType: informType, ActType: actType,
+			FirstTimestamp: node.ObjectMeta.CreationTimestamp.Time,
+			EventID: fmt.Sprint(node.UID), Cluster: node.ClusterName, Kind: node.Kind,
+			Name: node.Name, Namespace: node.Namespace, Action: "", Phase: fmt.Sprint(node.Status.Phase),
+			Reason: "", Source : "",
+			Message:""}
+	case "pod":
+		node := obj.(*corev1.Pod)
+		k8sRecord = K8sRecord{EventType: informType, ActType: actType,
+			FirstTimestamp: node.ObjectMeta.CreationTimestamp.Time,
+			EventID: fmt.Sprint(node.UID), Cluster: node.ClusterName, Kind: node.Kind,
+			PodName: node.Name, Namespace: node.Namespace, Action: "", Phase: fmt.Sprint(node.Status.Phase),
+			Reason: "", Source : "",
+			Message:""}
 	default:
 		return
 	}
 
 	db.Create(&k8sRecord)
-}
-
-func informerEvent(informer coreinformers.EventInformer, db *gorm.DB){
-	fmt.Println("Event informer handlers")
-
-	informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}){ fmt.Println(obj);   parseInform4K8SRecord("event", obj, db); },
-		UpdateFunc: func(old, new interface{}){ fmt.Println(old); fmt.Println(new); parseInform4K8SRecord("event", new, db);},
-		DeleteFunc: func(obj interface{}){ fmt.Println(obj); parseInform4K8SRecord("event", obj, db);},
-	})
-}
-
-func informerNamespace(informer coreinformers.NamespaceInformer, db *gorm.DB){
-	fmt.Println("Namespace informer handlers")
-
-	informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}){ fmt.Println(obj);   parseInform4K8SRecord("namespace", obj, db); },
-		UpdateFunc: func(old, new interface{}){ fmt.Println(old); fmt.Println(new); parseInform4K8SRecord("namespace", new, db);},
-		DeleteFunc: func(obj interface{}){ fmt.Println(obj); parseInform4K8SRecord("namespace", obj, db);},
-	})
-}
-
-func informerPod(informer coreinformers.PodInformer){
-	fmt.Println("Pod informer handlers")
-
-	informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}){ fmt.Println(obj)},
-		UpdateFunc: func(old, new interface{}){ fmt.Println(old); fmt.Println(new)},
-		DeleteFunc: func(obj interface{}){ fmt.Println(obj)},
-	})
-}
-
-func informerNode(informer coreinformers.NodeInformer){
-	fmt.Println("Node informer handlers")
-
-	informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    onAddNode,
-		UpdateFunc: onUpdateNode,
-		DeleteFunc: onDeleteNode,
-	})
-
-}
-
-func onAddNode(obj interface{}) {
-	node := obj.(*corev1.Node)
-	fmt.Println("add a node:", node.Name)
-}
-
-func onUpdateNode(old, new interface{} ) {
-	// 此处省略 workqueue 的使用
-	oldNode := old.(*corev1.Node)
-	newNode := new.(*corev1.Node)
-	fmt.Println("update a node:", oldNode.Name, newNode.Name)
-}
-
-func onDeleteNode(obj interface{}) {
-	node := obj.(*corev1.Node)
-	fmt.Println("delete a node:", node.Name)
 }
