@@ -42,6 +42,7 @@ type K8sRecord struct {
 	Status    string
 	Phase     string
 	FirstTimestamp time.Time
+	LastTimestamp time.Time
 }
 
 
@@ -100,40 +101,49 @@ func informerHandler(informerFactory informers.SharedInformerFactory, stopCh <-c
 	informersMap["namespace"] = informerFactory.Core().V1().Namespaces()
 	informersMap["pod"] = informerFactory.Core().V1().Pods()
 
+	defaultHandler := func(name string, db *gorm.DB) cache.ResourceEventHandler {
+		return cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) {  parseInform4K8SRecord(name, "add", obj, db); },
+			UpdateFunc: func(old, new interface{}) {
+				parseInform4K8SRecord(name, "update.old", old, db);
+				parseInform4K8SRecord(name, "update.new", new, db);
+			},
+			DeleteFunc: func(obj interface{}) {parseInform4K8SRecord(name, "delete", obj, db); },
+		}
+	}
+
 	for name, informer := range informersMap {
 		fmt.Println(" informer handlers : ",name)
 
-		switch informer := informer.(type) {
-
-		case  coreinformers.NodeInformer:
-		case  coreinformers.EventInformer:
-		case  coreinformers.NamespaceInformer:
-		case  coreinformers.PodInformer:
-			informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-				AddFunc: func(obj interface{}) { fmt.Println(obj); parseInform4K8SRecord(name, "add", obj, db); },
-				UpdateFunc: func(old, new interface{}) {
-					fmt.Println(old);
-					fmt.Println(new);
-					parseInform4K8SRecord(name, "update.old", old, db);
-					parseInform4K8SRecord(name, "update.new", new, db);
-				},
-				DeleteFunc: func(obj interface{}) { fmt.Println(obj); parseInform4K8SRecord(name, "delete", obj, db); },
-			})
-
-			go informer.Informer().Run(stopCh)
+		switch infromer := informer.(type){
+			case  coreinformers.NodeInformer:
+				infromer.Informer().AddEventHandler(defaultHandler(name,db))
+			case  coreinformers.EventInformer:
+				infromer.Informer().AddEventHandler(defaultHandler(name,db))
+			case  coreinformers.NamespaceInformer:
+				infromer.Informer().AddEventHandler(defaultHandler(name,db))
+			case  coreinformers.PodInformer:
+				infromer.Informer().AddEventHandler(defaultHandler(name,db))
+			default :continue;
 		}
+
 	}
+
+	informerFactory.Start(stopCh)
+	//informerFactory.WaitForCacheSync(stopCh)
+
 }
 
 // TODO：这部分要做大量字段枚举
 func parseInform4K8SRecord(informType string, actType string, obj interface{}, db *gorm.DB){
+	fmt.Println(obj);
 
 	var k8sRecord K8sRecord
 	switch informType {
 	case "event":
 		node := obj.(*corev1.Event)
 		k8sRecord = K8sRecord{EventType: informType, ActType: actType,
-			FirstTimestamp : node.FirstTimestamp.Time,
+			FirstTimestamp : node.FirstTimestamp.Time, LastTimestamp : node.LastTimestamp.Time,
 			Type : node.Type, EventID: fmt.Sprint(node.UID), Cluster: node.ClusterName, Kind: node.Kind,
 			Name: node.Name,Namespace: node.Namespace, Action: node.Action, Phase: "",
 			Reason: node.Reason, Source : node.Source.String(),
@@ -141,7 +151,7 @@ func parseInform4K8SRecord(informType string, actType string, obj interface{}, d
 	case "namespace":
 		node := obj.(*corev1.Namespace)
 		k8sRecord = K8sRecord{EventType: informType, ActType: actType,
-			FirstTimestamp: node.ObjectMeta.CreationTimestamp.Time,
+			FirstTimestamp: node.CreationTimestamp.Time,
 			EventID: fmt.Sprint(node.UID), Cluster: node.ClusterName, Kind: node.Kind,
 			Name: node.Name, Namespace: node.Name, Action: "", Phase: fmt.Sprint(node.Status.Phase),
 			Reason: "", Source : "",
@@ -149,7 +159,7 @@ func parseInform4K8SRecord(informType string, actType string, obj interface{}, d
 	case "node":
 		node := obj.(*corev1.Node)
 		k8sRecord = K8sRecord{EventType: informType, ActType: actType,
-			FirstTimestamp: node.ObjectMeta.CreationTimestamp.Time,
+			FirstTimestamp: node.CreationTimestamp.Time,
 			EventID: fmt.Sprint(node.UID), Cluster: node.ClusterName, Kind: node.Kind,
 			Name: node.Name, Namespace: node.Namespace, Action: "", Phase: fmt.Sprint(node.Status.Phase),
 			Reason: "", Source : "",
@@ -157,7 +167,7 @@ func parseInform4K8SRecord(informType string, actType string, obj interface{}, d
 	case "pod":
 		node := obj.(*corev1.Pod)
 		k8sRecord = K8sRecord{EventType: informType, ActType: actType,
-			FirstTimestamp: node.ObjectMeta.CreationTimestamp.Time,
+			FirstTimestamp: node.CreationTimestamp.Time,
 			EventID: fmt.Sprint(node.UID), Cluster: node.ClusterName, Kind: node.Kind,
 			PodName: node.Name, Namespace: node.Namespace, Action: "", Phase: fmt.Sprint(node.Status.Phase),
 			Reason: "", Source : "",
