@@ -28,7 +28,8 @@ type K8sRecord struct {
 	ActType string
 	EventID string `gorm:"index:event_id"`
 	EventName string `gorm:"index:event_name"`
-	PodIP     string `gorm:"index:pod_id"`
+	NodeIP    string `gorm:"index:node_ip"`
+	PodIP     string `gorm:"index:pod_ip"`
 	PodName   string
 	Cluster   string
 	Namespace string
@@ -42,7 +43,7 @@ type K8sRecord struct {
 	Status    string
 	Phase     string
 	FirstTimestamp time.Time
-	LastTimestamp time.Time
+	//LastTimestamp time.Time
 }
 
 
@@ -103,12 +104,12 @@ func informerHandler(informerFactory informers.SharedInformerFactory, stopCh <-c
 
 	defaultHandler := func(name string, db *gorm.DB) cache.ResourceEventHandler {
 		return cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {  parseInform4K8SRecord(name, "add", obj, db); },
+			AddFunc: func(obj interface{}) {  parseInform4K8SRecord(informerFactory, name, "add", obj, db); },
 			UpdateFunc: func(old, new interface{}) {
-				parseInform4K8SRecord(name, "update.old", old, db);
-				parseInform4K8SRecord(name, "update.new", new, db);
+				parseInform4K8SRecord(informerFactory, name, "update.old", old, db);
+				parseInform4K8SRecord(informerFactory, name, "update.new", new, db);
 			},
-			DeleteFunc: func(obj interface{}) {parseInform4K8SRecord(name, "delete", obj, db); },
+			DeleteFunc: func(obj interface{}) {parseInform4K8SRecord(informerFactory, name, "delete", obj, db); },
 		}
 	}
 
@@ -126,7 +127,6 @@ func informerHandler(informerFactory informers.SharedInformerFactory, stopCh <-c
 				infromer.Informer().AddEventHandler(defaultHandler(name,db))
 			default :continue;
 		}
-
 	}
 
 	informerFactory.Start(stopCh)
@@ -135,7 +135,7 @@ func informerHandler(informerFactory informers.SharedInformerFactory, stopCh <-c
 }
 
 // TODO：这部分要做大量字段枚举
-func parseInform4K8SRecord(informType string, actType string, obj interface{}, db *gorm.DB){
+func parseInform4K8SRecord(informerFactory informers.SharedInformerFactory, informType string, actType string, obj interface{}, db *gorm.DB){
 	fmt.Println(obj);
 
 	var k8sRecord K8sRecord
@@ -143,7 +143,7 @@ func parseInform4K8SRecord(informType string, actType string, obj interface{}, d
 	case "event":
 		node := obj.(*corev1.Event)
 		k8sRecord = K8sRecord{EventType: informType, ActType: actType,
-			FirstTimestamp : node.FirstTimestamp.Time, LastTimestamp : node.LastTimestamp.Time,
+			FirstTimestamp : node.FirstTimestamp.Time,
 			Type : node.Type, EventID: fmt.Sprint(node.UID), Cluster: node.ClusterName, Kind: node.Kind,
 			Name: node.Name,Namespace: node.Namespace, Action: node.Action, Phase: "",
 			Reason: node.Reason, Source : node.Source.String(),
@@ -166,10 +166,17 @@ func parseInform4K8SRecord(informType string, actType string, obj interface{}, d
 			Message:""}
 	case "pod":
 		node := obj.(*corev1.Pod)
+
+		// NOTE：这段从informer获取lister的内容，对比直接从lister操作，不确定效率如何
+		podInformer := informerFactory.Core().V1().Pods()
+		podNamespaceLister := podInformer.Lister().Pods(node.Namespace)
+		pod, _ := podNamespaceLister.Get(node.Name)
+
 		k8sRecord = K8sRecord{EventType: informType, ActType: actType,
 			FirstTimestamp: node.CreationTimestamp.Time,
 			EventID: fmt.Sprint(node.UID), Cluster: node.ClusterName, Kind: node.Kind,
 			PodName: node.Name, Namespace: node.Namespace, Action: "", Phase: fmt.Sprint(node.Status.Phase),
+			NodeIP: pod.Status.HostIP, PodIP: pod.Status.PodIP,
 			Reason: "", Source : "",
 			Message:""}
 	default:
