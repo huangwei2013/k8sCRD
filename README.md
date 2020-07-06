@@ -1,5 +1,5 @@
-# 1. K8S CRD扩展
-kubernetes的CRD实现示例
+# K8S CRD扩展
+## 1. kubernetes的CRD实现示例
 
 ## crdAPIDemo
 基于 kubebuilder 生成的默认 operator 工程，增加名为 sloop 的 CRD
